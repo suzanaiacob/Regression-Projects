@@ -1,0 +1,245 @@
+---
+title: "Non-linear regression"
+author: "Suzana Iacob"
+date: "18/03/2020"
+output: html_document
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(ggplot2)
+library(gridExtra)
+```
+
+# Understanding Diamond Prices
+
+## Preprocessing
+
+```{r}
+DiamondsTrain = read.csv("diamonds_train.csv")
+DiamondsTest = read.csv("diamonds_test.csv")
+head(DiamondsTrain)
+```
+
+## Plotting Diamond Prices
+We now plot the price as a function of weight. 
+
+```{r}
+ggplot(DiamondsTrain, aes(x = carat, y = price)) +
+   geom_point(color = "steelblue")  +
+   geom_smooth(color = "black") + 
+   xlab("Weight(Carat)")+ylab("Price") + 
+   ggtitle("Diamond Weight vs Price") + theme_bw()
+```
+
+We notice there the general increasing trend, however, there is high variance in price for a particular carat-weight (e.g. at 1.5 carats the price ranges from approximately 3,000 to 18,000). This could be due to other factors such as clarity, cut or color. Let us add clarity to the above plot. 
+
+```{r, echo=FALSE}
+ggplot(DiamondsTrain, aes(x = carat, y = price)) +
+   geom_point(aes(col = clarity))  +
+   geom_smooth(color = "black") + 
+   xlab("Weight(Carat)")+ylab("Price") + 
+   ggtitle("Diamond Weight vs Price") + theme_bw()
+```
+It is now apparent that for the same carat weight, clarity is a differentiator (e.g. diamonds with clarity VS2 and VS1 tend to be more expensive than those with clarity I1).
+
+## Building an Initial Linear Regression Model
+
+We begin with a simple regression model, taking into account the "4 C" variables.
+```{r}
+DiamondsLM = lm(price ~ carat + cut + color + clarity, data=DiamondsTrain)
+summary(DiamondsLM)
+```
+
+The regression model gives us the in-sample R-squared, which is extremely high. This could be due to the 4 C explaining diamond prices extremely well, or we could be overfitting our data. 
+
+We now inspect the out-of-sample R-squared, which is similarly high. At first glance, we might conclude that this is an accurate model fitting the data well and having a good performance of the testing set. 
+
+```{r}
+DiamondsSST = sum((mean(DiamondsTrain$price) - DiamondsTest$price)^2)
+DiamondsLMR2 = summary(DiamondsLM)$r.squared
+print(summary(DiamondsLM)$r.squared)
+
+DiamondsLMPredictTest = predict(DiamondsLM, newdata=DiamondsTest)
+DiamondsLMSSE = sum((DiamondsLMPredictTest - DiamondsTest$price)^2)
+DiamondsLMOSR2 = 1 - DiamondsLMSSE/DiamondsSST
+print(DiamondsLMOSR2)
+```
+
+We also note that all of the variables meet the 95% significance threshold. We will now attempt to improve the model, while preserving the "4 C" variables which we know to be significant, not only from the data, but from industry expertise as well. 
+
+##  Residual Analysis
+
+We will now plot the residuals of the model as a function of the fitted values (i.e. predicted prices). We also include a horizontal line at x=0. This represents the expected mean of residuals. Residual analysis helps us assess the quality of our model and whether we meet the regression assumptions. Linear regression assumes an underlying linear relationship between the dependent and independent variable, and a normally distributed error term with constant variance. 
+
+```{r}
+DiamondsLMResiduals = data.frame(predicted = predict(DiamondsLM),
+                          residuals = residuals(DiamondsLM))
+
+ggplot(DiamondsLMResiduals,  aes(x = predicted, y = residuals)) +
+  geom_point(color = "steelblue") +
+  geom_smooth(color = "black") +
+  geom_hline(yintercept=0, linetype="dashed") +
+  xlab("Fitted values")+ylab("Residuals") +
+  ggtitle("Residual vs Fitted Plot") + theme_bw()
+
+```
+
+Ideally, the residuals plot should appear random across the X-axis. The mean of residuals should be around 0 (marked by the dashed horizontal line). Instead, we see a clear pattern in our residuals - we are overfitting for small and very large diamond prices and underfitting for medium prices. 
+
+We also notice heteroskedasticity in the residual plot, i.e. the variance of the residuals is unequal, with low variance at the beginning, and large variance for high diamond prices. Linear regression has a homoscedasticity assumption, and we see that in this case this assumption is violated, hence linear regression in this form may not be an appropriate model. This could also be due to the fact that we have fewer data for very expensive diamonds.
+
+## Heuristic Prediction
+We would now like to fit a model given by the formula *P = αW^2* where P is the price, W is the weight in carats and α is the typical price of a 1-carat diamond. We first calculate the α value from our data by taking the average price of 1-carat diamonds. 
+
+```{r}
+pricepercarat = DiamondsTrain$price/DiamondsTrain$carat
+alpha = mean(pricepercarat)
+
+DiamondsHeuristicPredictTrain = alpha * (DiamondsTrain$carat ^ 2 )
+DiamondsHeuristicSSE1 = sum((DiamondsHeuristicPredictTrain - DiamondsTrain$price)^2)
+DiamondsHeuristicSST = sum((mean(DiamondsTrain$price) - DiamondsTrain$price)^2)
+DiamondsHeuristicR2 = 1 - DiamondsHeuristicSSE1/DiamondsHeuristicSST
+
+DiamondsHeuristicPredictTest = alpha * (DiamondsTest$carat ^ 2 )
+DiamondsLMSSE2 = sum((DiamondsHeuristicPredictTest - DiamondsTest$price)^2)
+DiamondsHeuristicSST2 = sum((mean(DiamondsTrain$price) - DiamondsTest$price)^2)
+DiamondsHeuristicOSR2 = 1 - DiamondsLMSSE2/DiamondsHeuristicSST2
+
+print(DiamondsHeuristicR2)
+print(DiamondsHeuristicOSR2)
+```
+The parameter alpha is 3897.054 calculated as the average price/carat. The model uses experts' knowledge and performs relatively well. Lacking sophisticated statistical tools, one could confidently use such a model for a quick approximation. 
+ 
+ 
+## Natural Splines Model
+
+We create a natural (cubic) spline model with 6 degrees of freedom. We evaluate the in-sample and out-of-sample performance.
+```{r}
+library(splines)
+DiamondsSplines=lm(price~ns(carat,6),data=DiamondsTrain)
+DiamondsSplinesR2 = summary(DiamondsSplines)$r.squared
+print(summary(DiamondsSplines)$r.squared)
+
+DiamondsSplinesPredictTest = predict(DiamondsSplines, newdata=DiamondsTest)
+DiamondsSplinesSSE = sum((DiamondsSplinesPredictTest - DiamondsTest$price)^2)
+DiamondsSplinesOSR2 = 1 - DiamondsSplinesSSE/DiamondsSST
+print(DiamondsSplinesOSR2)
+
+```
+
+
+```{r, echo=FALSE}
+library(ggplot2)
+ggplot(data=DiamondsTrain, aes(x=carat)) +
+  geom_point(aes(y=price), color="steelblue") +
+  geom_line(aes(y=predict(DiamondsSplines)),lwd=1, color = "black") +
+  theme_bw() +
+  xlab("Weight(Carat)") +
+  ylab("Price") +
+  ggtitle("Weight vs Price - Splines Regression 6DF") + theme_bw()
+```
+The Spline model ourperforms standard regression, but we notice that it still does not model the relationship perfectly well.
+
+
+## General Aditive Model
+
+We also attempt a GAM model, which also performs very well.
+```{r}
+library(gam)
+DiamondsGAM = gam(price~ns(carat,6) + factor(cut) + factor(color) + factor(clarity), data=DiamondsTrain)
+
+DiamondsGAMPredictTrain = predict(DiamondsGAM, newdata=DiamondsTrain)
+DiamondsGAMSSE1 = sum((DiamondsGAMPredictTrain - DiamondsTrain$price)^2)
+DiamondsGAMSST = sum((mean(DiamondsTrain$price) - DiamondsTrain$price)^2)
+DiamondsGAMR2 = 1 - DiamondsGAMSSE1/DiamondsGAMSST
+
+
+DiamondsGAMPredictTest = predict(DiamondsGAM, newdata=DiamondsTest)
+DiamondsGAMSSE = sum((DiamondsGAMPredictTest - DiamondsTest$price)^2)
+DiamondsGAMOSR2 = 1 - DiamondsGAMSSE/DiamondsSST
+print(DiamondsGAMR2)
+print(DiamondsGAMOSR2)
+```
+
+
+
+## Logarithmic Model
+
+We now want to fit a logarithmic model. We have seen that the residuals in linear regression follow a pattern of polynomial shape, which may indicate that a logarithmic model would be suitable. A log transformation will keep the variance in residuals closer to the line.
+
+Moreover, by inspecting the distribution of prices we notice a long tail to the right, indicating that we have much more data for lower-priced diamonds and less data for expensive diamonds. This is usually a sign that we need to take the log of the price. A similar observation can be made about carats, although not as prominent. Predicting the log of the price using the log of carat might be a better fit.
+
+```{r, echo=FALSE}
+library(ggplot2)
+plot1=ggplot(data=DiamondsTrain, aes(x=price)) +
+  geom_histogram(aes(y=..density..), bins = 45, fill="steelblue", color="white") + 
+  geom_density(alpha=.2, fill="azure") +
+  xlab("Diamond Prices") + ylab("Density") + theme_bw()
+
+plot2=ggplot(data=DiamondsTrain, aes(x=carat)) +
+  geom_histogram(aes(y=..density..), bins = 30, fill="steelblue", color="white") + 
+  geom_density(alpha=.2, fill="azure") +
+  xlab("Diamond Weights(catrat)") + ylab("Density") + theme_bw()
+
+grid.arrange(plot1, plot2, ncol=2, top="Distributions of Prices and Carats")
+```
+
+Lastly, when we attempt to plot the log of price and carat, the relationship appears much more linear.
+
+```{r}
+DiamondsTrain$logPrice = log(DiamondsTrain$price)
+DiamondsTrain$logCarat = log(DiamondsTrain$carat)
+
+DiamondsTest$logPrice = log(DiamondsTest$price)
+DiamondsTest$logCarat = log(DiamondsTest$carat)
+
+ggplot(data=DiamondsTrain, aes(x= logCarat)) +
+  geom_point(aes(y=logPrice), color="steelblue") +
+  theme_bw() +
+  xlab("log(Weight(Carat))") +
+  ylab("log(Price)") +
+  ggtitle("Weight vs Price - Logarithmic Plot") + theme_bw()
+```
+
+```{r}
+DiamondsLog = lm(logPrice ~ logCarat + cut + color + clarity, data=DiamondsTrain)
+DiamondsLogR2 = summary(DiamondsLog)$r.squared
+print(summary(DiamondsLog)$r.squared)
+
+DiamondsLogPredictTest = predict(DiamondsLog, newdata=DiamondsTest)
+DiamondsLogSSE = sum((DiamondsLogPredictTest - DiamondsTest$logPrice)^2)
+DiamondsLogSST = sum((mean(DiamondsTrain$logPrice) - DiamondsTest$logPrice)^2)
+DiamondsLogOSR2 = 1 - DiamondsLogSSE/DiamondsLogSST
+DiamondsLogOSR2
+
+```
+
+This is our final model. Let us summarize the perfomance of the models we have seen thus far.
+
+```{r, echo=FALSE}
+DiamondsResults <- data.frame(ModelName = c("Linear Model", "Tavernier's Regression", "Natural Splines",
+                                            "GAM", "Log Model"),
+                          In_Sample_R2 = c(DiamondsLMR2, DiamondsHeuristicR2, DiamondsSplinesR2, 
+                                           DiamondsGAMR2, DiamondsLogR2),
+                          Out_Of_Sample_R2 = c(DiamondsLMOSR2, DiamondsHeuristicOSR2, DiamondsSplinesOSR2, 
+                                           DiamondsGAMOSR2, DiamondsLogOSR2))
+DiamondsResults
+```
+
+The logarithmic model appears by far the best choice, having superior performance both in-sample and out of sample. Interestingly, the logarithmic R-squared outperforms the in-sample R-squared, which is uncommon but possible if the data in the test set is more centered around the mean. It is possible that for example, the test set has fewer low-priced diamonds. 
+
+Lastly, the residual analysis demonstrates that the residuals are centered around the 0-line and do not display any patters. The original residual plot showed a systematic error, in terms of over/underfitting as well as heteroskedasticity. The logarithmic residual plot has a relatively equal number of points above and below the line and the variance is constant. This strengthens our belief in the model's suitability.
+```{r}
+DiamondsLogResiduals <- data.frame(predicted = predict(DiamondsLog),
+                          residuals = residuals(DiamondsLog))
+
+
+ggplot(DiamondsLogResiduals, aes(x = predicted, y = residuals)) + 
+  geom_point(color = "steelblue") +
+  geom_smooth(color = "black") +
+  geom_hline(yintercept=0, linetype="dashed", color="black") +
+  xlab("Fitted values")+ylab("Residuals") +
+  ggtitle("Residual vs Fitted Plot - Logarithmic Model") + theme_bw()
+```
+
+
