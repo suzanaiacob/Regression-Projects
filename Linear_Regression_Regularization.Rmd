@@ -1,0 +1,389 @@
+---
+title: "Linear Regression - Regularization"
+author: "Suzana Iacob"
+date: "23/09/2019"
+output:
+  html_document: default
+  pdf_document: default
+  word_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning=FALSE, message=FALSE)
+```
+
+This analysis looks at profitability of resuturants based on restaurant characteristics.
+
+```{r}
+train = read.csv("train_data.csv")
+test = read.csv("test_data.csv")
+sites = rbind(train,test)
+sites.const = read.csv("site_const_data.csv")
+head(sites)
+```
+
+ 
+# Initial analysis
+
+We now explore the correlation matrix of all variables. We remove store number since this is not a predictor but an index. We remove state (character variable).
+
+```{r}
+sites_numeric = sites
+sites_numeric = subset(sites_numeric, select = -c(store.number, state) ) 
+library(corrplot)
+corrplot(cor(sites_numeric), method = "circle")
+```
+
+
+We can further remove intersect and freestand (categorical variables).
+```{r}
+sites_numeric = sites
+sites_numeric = subset(sites_numeric, select = -c(store.number, state, intersect, freestand)) 
+corrplot(cor(sites_numeric), method = "circle")
+```
+
+
+Pairs of highly correlated: 
+- drive and public `r cor(sites_numeric$drive , sites_numeric$public)`
+- drive and walk `r cor(sites_numeric$drive, sites_numeric$walk)`
+- median income and post grad `r cor(sites_numeric$med.inc, sites_numeric$post.grad)`
+- pop and agg.inc `r cor(sites_numeric$pop, sites_numeric$agg.inc)` - correlated and we should only pick one so agg.inc
+
+# Model Building
+
+We will fit a model having all available predictors, as well as a new model. At each step **we will use the datasets as follows:**
+
+- The **training set** will be used to train the model, inspect the coefficients and guide model selection.
+- The **testing set** will be used to evaluate the model and assess its predictive performance.
+- The **dataset with sites under construction** will be used to obtain a valuation for the new sites. For this we will employ the model to generate the valuation figure. Since the model was built on the training set, we will **additionally re-train using both the training and testing set**, and then compute the valuation, in order to obtain a more accurate figure. 
+
+# Original Model Evaluation
+
+```{r}
+model.original = lm(annual.profit ~ agg.inc + sqft + col.grad + com60, data=train) 
+summary(model.original)
+```
+All of the variables meet the significance threshold. We note that the values correspond to the reported figures. 
+
+
+```{r}
+model.original.r2 = summary(model.original)$r.squared
+
+sst.test = sum((mean(train$annual.profit) - test$annual.profit )^2)
+model.original.predict = predict(model.original, newdata=test)
+model.original.sse = sum((model.original.predict - test$annual.profit)^2)
+model.original.osr2 = 1 - model.original.sse/sst.test
+
+print(model.original.r2)
+print(model.original.osr2) 
+```
+
+When predicting on the 48 stores under construction we obtain the reported $40.02 million. 
+
+```{r}
+newpred.original = predict(model.original,newdata=sites.const)
+value.original1 = sum(newpred.original)
+print(value.original1)
+model.original = lm(annual.profit ~ agg.inc + sqft + col.grad + com60, data=sites) 
+newpred.original = predict(model.original,newdata=sites.const)
+value.original2 = sum(newpred.original)
+print(value.original2)
+```
+
+# All-Variables Model Evaluation
+We refit the model with all variables only on the training set. 
+
+```{r}
+model.all = lm(annual.profit ~. - store.number, data=train) 
+summary(model.all)
+model.all.r2 = summary(model.all)$r.squared
+model.all.predict = predict(model.all, newdata=test)
+model.all.sse = sum((model.all.predict - test$annual.profit)^2)
+model.all.osr2 = 1 - model.all.sse/sst.test
+print(model.all.r2)
+print(model.all.osr2)
+set.seed(123)
+```
+
+
+```{r}
+newpred.all = predict(model.all,newdata=sites.const)
+value.all1 = sum(newpred.all)
+print(value.all1)
+model.all = lm(annual.profit ~. - store.number, data=sites) 
+newpred.all = predict(model.all,newdata=sites.const)
+value.all2 = sum(newpred.all)
+print(value.all2)
+```
+
+# New Model
+
+We start by adding all of the new variables into a model, in addition to the original variables. 
+
+```{r}
+model.new = lm(annual.profit ~ agg.inc + sqft + col.grad + com60 + 
+                      lci + nearcomp + nearmil + freestand, data=train) 
+summary(model.new )
+```
+
+
+```{r}
+model.new.r2 = summary(model.new)$r.squared
+model.new.predict = predict(model.new, newdata=test)
+model.new.sse = sum((model.new.predict - test$annual.profit)^2)
+model.new.osr2 = 1 - model.new.sse/sst.test
+print(model.new.r2)
+print(model.new.osr2) 
+```
+
+```{r}
+newpred.new = predict(model.new,newdata=sites.const)
+value.new1 = sum(newpred.new)
+print(value.new1)
+model.new = lm(annual.profit ~ agg.inc + sqft + col.grad + com60 + 
+                      lci + nearcomp + nearmil + freestand, data=sites) 
+newpred.new = predict(model.new,newdata=sites.const)
+value.new2 = sum(newpred.new)
+print(value.new2)
+```
+
+We note that the predictive accuracy has improved but the above brings us to a valuation of 36 million. After trial-and-error we observe that the below model with **lci (retail store labor cost)** and **nearcomp (compeating nearby businesses)** preserves the valuation to over 40 million.
+
+
+```{r}
+model.new = lm(annual.profit ~ agg.inc + sqft + col.grad + com60 + 
+                      lci + nearcomp, data=train) 
+model.new.r2 = summary(model.new)$r.squared
+model.new.predict = predict(model.new, newdata=test)
+model.new.sse = sum((model.new.predict - test$annual.profit)^2)
+model.new.osr2 = 1 - model.new.sse/sst.test
+print(model.new.r2)
+print(model.new.osr2) 
+newpred.new = predict(model.new,newdata=sites.const)
+value.new1 = sum(newpred.new)
+print(value.new1) 
+model.new = lm(annual.profit ~ agg.inc + sqft + col.grad + com60 + 
+                      lci + nearcomp, data=sites)
+newpred.new = predict(model.new,newdata=sites.const)
+value.new2 = sum(newpred.new)
+print(value.new2) 
+```
+
+```{r}
+summary <- data.frame(ModelName = c("Original Model", "All Predictors", "New Model"),
+                          In_Sample_R2 = c(model.original.r2, model.all.r2, model.new.r2),
+                          Out_Of_Sample_R2 = c(model.original.osr2, model.all.osr2, model.new.osr2),
+                          Valuation_train =c(value.original1, value.all1, value.new1),
+                          Valuation_all =c(value.original2, value.all2, value.new2))
+summary
+```
+
+
+# Best subset selection
+
+## Forward step selection
+
+```{r}
+library(leaps)
+n.predictors <- ncol(train)-2
+forward.subset <- regsubsets(annual.profit~.- store.number,train,nvmax=n.predictors,method="forward")
+```
+
+## Cross-validation
+
+```{r}
+set.seed(144)
+predict.regsubsets = function(object, newdata, id, ...) {
+  form = as.formula(object$call[[2]])
+  mat = model.matrix(form, newdata)
+  coefi = coef(object, id = id)
+  mat[, names(coefi)] %*% coefi  
+}
+
+folds <- sample(1:10,nrow(train),replace=TRUE)
+
+MSE.forward.subset <- matrix(NA,10,n.predictors) 
+for (i in 1:10){
+  forward.subset <- regsubsets(annual.profit~.- store.number,train[folds!=i,],nvmax=n.predictors,method="forward")
+  for (j in 1:n.predictors){
+    prediction.forward.subset <- predict.regsubsets(forward.subset,train[folds==i,],id=j)
+    MSE.forward.subset[i,j] = sum((prediction.forward.subset - train[folds==i,]$annual.profit)^2) /nrow(train[folds==i,])
+  }
+}
+
+MSE.average = rep(NA, n.predictors)
+for (j in 1:n.predictors){
+  MSE.average[j] = mean(MSE.forward.subset[, j])
+}
+```
+
+```{r, echo=FALSE}
+library(ggplot2)
+qplot(seq_along(MSE.average), MSE.average) + xlab("No of Variables") + ylab("MSE") + theme_bw()
+```
+
+## Best subset model evaluation
+We see that the MSE drops and then remains constant. We pick the minimum value which leads to the lowest Mean Squared Error.
+
+```{r}
+best.no = which.min(MSE.average)
+print(best.no )
+coef(forward.subset,best.no)
+```
+We see that the best model picked via subset selection has `r best.no` variables. Let us fit a linear model with these coefficients. 
+
+```{r}
+model.fwd.selection = lm(annual.profit ~ lci + nearcomp + nearmil + freestand + sqft + pop + agg.inc  + 
+                           col.grad + drive + home, data=train) 
+model.fwd.selection.r2 = summary(model.fwd.selection)$r.squared
+model.fwd.selection.predict = predict(model.fwd.selection, newdata=test)
+model.fwd.selection.sse = sum((model.fwd.selection.predict - test$annual.profit)^2)
+model.fwd.selection.osr2 = 1 - model.fwd.selection.sse/sst.test
+print(model.fwd.selection.r2)
+print(model.fwd.selection.osr2) 
+newpred.fwd.selection = predict(model.fwd.selection,newdata=sites.const)
+value.fwd.selection1 = sum(newpred.fwd.selection)
+print(value.fwd.selection1) 
+model.fwd.selection = lm(annual.profit ~ lci + nearcomp + nearmil + freestand + sqft + pop + agg.inc  + 
+                           col.grad + drive + +public + home, data=sites) 
+newpred.fwd.selection = predict(model.fwd.selection,newdata=sites.const)
+value.fwd.selection2 = sum(newpred.fwd.selection)
+print(value.fwd.selection2) 
+```
+
+# LASSO Regularization
+
+We note that none of the new stroes are located in Ocklahoma, hence we need to add a new column to the matrix having only 0 values. 
+```{r}
+x.train=model.matrix(annual.profit~.-store.number-1,data=train) 
+y.train=train$annual.profit
+x.test=model.matrix(annual.profit~.-store.number-1,data=test) 
+y.test=test$annual.profit
+x.sites=model.matrix(annual.profit~.-store.number-1,data=sites) 
+y.sites=sites$annual.profit
+x.newsites=model.matrix(Kathleen.Previous.Prediction~.-store.number-1,data=sites.const) 
+x.newsites = cbind(x.newsites, stateOK = rep(0, 48))  
+order <- c(1:11, 36, 12:35)
+x.newsites <- x.newsites[, order]
+```
+
+
+## LASSO model
+We now create the LASSO model and plot the coefficients as a function of Log Lambda. We choose the sequence -15 to 20 as we observed it yelds lammbda values which lead to models will all variables (36 variables to 0 variables), exemplifying LASSO's subset selection properties.
+
+```{r}
+library(glmnet)
+set.seed(144)
+lambdas.lasso = exp(seq(20, -15, -0.05))
+model.lasso = glmnet(x.train,y.train,alpha=1,lambda=lambdas.lasso)
+plot(model.lasso ,"lambda")
+```
+
+```{r}
+cv.lasso <- cv.glmnet(x.train,y.train,lambda=lambdas.lasso,alpha=1,nfolds=10)
+plot(cv.lasso)
+```
+
+We can further zoom into the above graph for a bettwe depiction of the MSE.
+```{r, echo=FALSE}
+lambdas.lasso = exp(seq(13, 7, -0.05))
+cv.lasso <- cv.glmnet(x.train,y.train,lambda=lambdas.lasso,alpha=1,nfolds=10)
+plot(cv.lasso)
+```
+
+
+```{r}
+lasso.lambda.cv <- cv.lasso$lambda.min
+lasso.lambda.1SE.cv <- cv.lasso$lambda.1se
+print(lasso.lambda.cv)
+print(lasso.lambda.1SE.cv)
+print(log(lasso.lambda.cv))
+print(log(lasso.lambda.1SE.cv))
+```
+
+We see the values of lambda and the log(lamda) which we can also track on the graph. We choose the **lambda + 1 standard error** because, in this case we prefer interpretability over minimizing the MSE. The model must drive decison making in a sensitive business scenario (where the store valuation will influence a buyout decision). Hence a smaller number of coefficients leading to increased interpretability is preferable. We also note that the MSE does not drastically change betweent the optimal lambda and 1 standard error above
+
+## Repeated cross-validation
+
+```{r, results="hide"}
+library(coefplot)
+
+lambda.list1 = rep(NA, 100)
+coeff.list1 =  rep(NA, 100)
+
+for (i in 1:100){
+  lambdas.lasso = exp(seq(13, 7, -0.05))
+  model.lasso = glmnet(x.train,y.train,alpha=1,lambda=lambdas.lasso)
+  cv.lasso <- cv.glmnet(x.train,y.train,alpha=1,lambda=lambdas.lasso,nfolds=10)
+  lasso.lambda.cv <- cv.lasso$lambda.1se
+  lambda.list1[i] = lasso.lambda.cv
+  coeff.list1[i] = nrow(extract.coef(cv.lasso)) -1
+}
+```
+
+```{r}
+hist(lambda.list1, breaks = 20)
+```
+
+```{r}
+hist(coeff.list1, breaks = 100)
+```
+```{r}
+median(lambda.list1)
+```
+
+We note that once more the LASSO fits models with 20 coefficients as the most frequent value. We pick the best lambda value as the median value.
+```{r}
+best.lambda = median(lambda.list1)
+```
+
+
+##Final LASSO model
+
+```{r}
+model.lasso.final = glmnet(x.train,y.train,alpha=1,lambda=best.lambda) 
+model.lasso.predict = predict(model.lasso.final,x.train)
+model.lasso.r2 <- 1-sum((model.lasso.predict-train$annual.profit)^2)/sum((mean(train$annual.profit)-train$annual.profit)^2)
+
+model.lasso.predict.test = predict(model.lasso.final,x.test)
+model.lasso.osr2 <- 1-sum((model.lasso.predict.test-test$annual.profit)^2)/sum((mean(train$annual.profit)-test$annual.profit)^2)
+newpred.lasso = predict(model.lasso.final,x.newsites)
+value.lasso1 = sum(newpred.lasso)
+
+model.lasso.final = glmnet(x.sites,y.sites,alpha=1,lambda=best.lambda) 
+newpred.lasso = predict(model.lasso.final,x.newsites)
+value.lasso2 = sum(newpred.lasso)
+
+print(model.lasso.r2)
+print(model.lasso.osr2)
+print(value.lasso1) 
+print(value.lasso2) 
+
+```
+We note that 13 of the coefficients are non-zero.
+
+```{r}
+library(coefplot)
+coef(model.lasso.final)
+
+```
+
+Let us finally take a look at all the models.
+
+
+```{r}
+summary <- data.frame(ModelName = c("Original Model", "All Predictors", "New Model", "Best Subset", "LASSO"),
+                          In_Sample_R2 = c(model.original.r2, model.all.r2,
+                                           model.new.r2, model.fwd.selection.r2, model.lasso.r2),
+                          Out_Of_Sample_R2 = c(model.original.osr2, model.all.osr2,
+                                               model.new.osr2, model.fwd.selection.osr2, model.lasso.osr2),
+                          Valuation_train =c(value.original1, value.all1, value.new1, 
+                                             value.fwd.selection1, value.lasso1),
+                          Valuation_all =c(value.original2, value.all2, value.new2, 
+                                           value.fwd.selection2, value.lasso2))
+
+summary
+```
+
+
+As a final model we choose **Best Subset Selection, as it achieves the best predictive performance with the and fewer coefficents. As we mentioned, we value interpretability, and a more parsimonious model is more valuable to guide Milagro and Harriman Capital's decision making**. 
