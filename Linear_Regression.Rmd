@@ -1,0 +1,274 @@
+---
+title: "Linear and Non-linear Regression"
+author: "Suzana Iacob"
+date: "15/09/2019"
+output:
+  html_document:
+    df_print: paged
+  pdf_document: default
+  word_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+This report analyzes two datasets and uses visualizations and regression models to obtain predictions. 
+
+# 1: Forecasting Automobile Sales 
+
+## Preprocessing
+
+The dataset contains the unit sales of Hyundai Elantra and Jeep Wrangler, two types of automobiles, alongside variables which will serve as predictors for the sales. We start by loading the data and visually inspecting a small subset.. 
+
+```{r, echo=TRUE}
+WranglerElantra = read.csv("WranglerElantra2018.csv")
+head(WranglerElantra)
+```
+
+We also inspect the datatypes to ensure our model will yield the expected results. We note that the variables appear correct except for date which needs to be converted into a categorical variable.
+
+```{r, echo=FALSE}
+WranglerElantra$date = as.Date(WranglerElantra$date, "%m/%d/%y")
+str(WranglerElantra$date)
+str(WranglerElantra)
+```
+
+## Building an intial regression model 
+
+We begin by selecting a training set comprising all observations in 2010–2017, and a test set comprising all observations in 2018.
+```{r}
+WranglerElantraTrain = subset(WranglerElantra, Year < 2018)
+WranglerElantraTest = subset(WranglerElantra, Year == 2018) 
+```
+
+We then build an initial model to predict monthly Wrangler sales with five independent variables: Year, Unemployment.Rate, Wrangler.Queries, CPI.Energy, and CPI.All.
+
+```{r}
+WranglerLM = lm(Wrangler.Sales ~ Year + Unemployment.Rate + Wrangler.Queries + CPI.Energy + CPI.All, data=WranglerElantraTrain)
+summary(WranglerLM)
+```
+We note that Year, Unemployment.Rate, Wrangler.Queries and CPI.Energy are significant to the 95% level. 
+
+We can interpret the initial model as follows:
+ - Year has a negative relationship with Wrangler Sales, for each additional year, the Wrangler Sales decrease by 2,343 units.
+ - Similarly, Unemployment Rate and Wrangler Sales have a negative relationship which matches intuition ( as unemployment increases, car sales decrease)
+ - Wrangler Queries and CPI Energy have a positive relationship with sales, whereas CPI.ALL is not statistically significant.
+
+## Improving the model 
+
+Prior to assessing model performance by calculating out-of-sample R-squared values, we wish to build a model that accurately represents the business context.  We start by removing the CPI.ALL variable, which is the only variable that does not match the significance threshold. Removing variables one by one is a valuable strategy for selecting the relevant predictors.
+
+```{r}
+WranglerLM2 = lm(Wrangler.Sales ~ Year + Unemployment.Rate + Wrangler.Queries + CPI.Energy, data=WranglerElantraTrain)
+summary(WranglerLM2)
+```
+We note that, after removing CPI.All, **all of the other variables remain significant**. Additionally, the relationships maintain signs (Year and Unemployment maintain a negative relationship, while Queries and CPI Energy, a positive one). Nevertheless, we might have multicollinearity in the model as independent variables might be correlated to one another, affecting the model coefficients. We will later construct a correlation matrix with all variables.
+
+The question that arises is - **which predictors should we choose?** We could take the approach of selecting all variables that meet a specific threshold (here 95%), yet this might not represent an accurate depiction of reality. We should additionally use domain knowledge and expertise to gain insight into what the variables represent and whether the relationships highlighted by the statistical model make sense in the business context.
+
+For example - unemployment and automobile sales are negatively correlated. This is what we expect since unemployment causes economic difficulties and consumers may have less income available for purchasing automobiles. This may be especially true for the sales of Jeep Wrangler, a four-wheel-drive off-road SUV, which might not be a necessity.  However, **year and car sales are negatively correlated**. The possibility exists that the Wrangler series decreased in popularity over time, yet this is not a relationship that we anticipated. Moreover, **we expect unemployment to be highly correlated with time** since unemployment is an economic indicator that changes over time alongside economic upturns or downturns. Furthermore, even if time and sales exhibit a strong relationship, we must consider this in the context of the predictive power of the model. **Past sales may not be an indicator of future sales** (as it is often observed in the stock market), and if we wish to use the model to forecast future demand, the time element may not be a representative predictor. 
+
+Let us have a closer look at the relationship of time versus sales and unemployment versus sales. 
+
+```{r, echo=FALSE}
+library(ggplot2)
+library(gridExtra)
+plot1 = ggplot(data = WranglerElantra, aes(x = date, y = Wrangler.Sales)) + 
+  geom_point(color = "steelblue")  +
+  xlab("Time") + ylab("Wrangler Sales") +
+  theme(legend.title=element_blank()) + theme_bw()
+
+plot2 = ggplot(data = WranglerElantra, aes(x = date, y = Unemployment.Rate)) + 
+  geom_point(color = "steelblue")  +
+  xlab("Time") + ylab("Unemployment Rate") +
+  theme(legend.title=element_blank()) + theme_bw()
+
+grid.arrange(plot1, plot2, ncol=2, top="Time Relationship with Wrangler Sales and Unemployment")
+```
+
+We notice Time has a strong negative relationship with unemployment, however, Wrangler Sales actually increase over time. We thus decide to **remove the Year variable from our model**. 
+
+```{r}
+WranglerLM3 = lm(Wrangler.Sales ~ Unemployment.Rate + Wrangler.Queries + CPI.Energy, data=WranglerElantraTrain)
+print(summary(WranglerLM3)$r.squared)
+
+WranglerLM3PredictTest = predict(WranglerLM3, newdata=WranglerElantraTest)
+WranglerLM3SSE = sum((WranglerLM3PredictTest - WranglerElantraTest$Wrangler.Sales)^2)
+WranglerSST = sum((mean(WranglerElantraTrain$Wrangler.Sales) - WranglerElantraTest$Wrangler.Sales)^2)
+WranglerLM3R2 = 1 - WranglerLM3SSE/WranglerSST
+print(WranglerLM3R2)
+```
+
+The R-squared has decreased, however, we believe this to be a superior model, as we have seen the time element to be misleading. Furthermore, the R-squared has the disadvantage of increasing with the number of variables in the model. Consequently, we should not utilize solely R-squared as an indicator of performance, but combine it with domain knowledge and intuition.  
+
+##  Modeling Seasonality
+
+We represent seasonality using the Month variable. We must convert this into a categorical variable; if we leave it as a number, a change from December(12) to January(1) would be treated as a "decrease" in Month, which does not accurately represent our context. Moreover, the model would assume a linear effect of Month on sales, by modeling as a factor, we no longer restrict the effect to be linear.
+
+```{r}
+WranglerElantraTrain$Month = as.factor(WranglerElantraTrain$Month)
+WranglerElantraTest$Month = as.factor(WranglerElantraTest$Month)
+WranglerLM4 = lm(Wrangler.Sales ~ Month + Unemployment.Rate + Wrangler.Queries + CPI.Energy, data=WranglerElantraTrain)
+summary(WranglerLM4)
+```
+We interpret the model as follows: The intercept term corresponds to the level of sales in Month1 (January). The coefficients of each of the other Month-variables, represent the increase in Sales in the respective month, as compared to the January sales. The coefficients of the rest of the variables (Unemployment, etc.) represent the change in sales per unit-change in the respective variable, as calculated in the month of January. 
+
+In modeling demand and sales, it is often useful to model seasonality, that is, sales tend to be cyclical in time. For example, sales of all products increase during the winter holidays, while ice cream sales increase in the summer. We notice that the R-squared of the model improved significantly, from 0.75 to 0.89. This leads to the conclusion that adding Month was correct. Furthermore, all other variables remain significant, suggesting the model has little variability and is stable. 
+
+We now know that Month is significant, and we can interpret this by stating that summer months (Month5, 6, and 7) are associated with larger increases, hence **consumers are in greater need of SUV vehicles during the summer**. However, we note that the coefficients are always positive, hence we see no decrease and thus no cyclical pattern. **We might, in fact, be capturing the time effect on sales** (as we have already seen there is a positive relationship with sales increasing over time). We choose to retain the Month variable, yet we should be cautious when using this model for predictions.
+
+We finally characterize the model's out-of-sample performance.
+```{r}
+WranglerLM4PredictTest = predict(WranglerLM4, newdata=WranglerElantraTest)
+WranglerLM4SSE = sum((WranglerLM4PredictTest - WranglerElantraTest$Wrangler.Sales)^2)
+WranglerSST = sum((mean(WranglerElantraTrain$Wrangler.Sales) - WranglerElantraTest$Wrangler.Sales)^2)
+WranglerLM4R2 = 1 - WranglerLM4SSE/WranglerSST
+WranglerLM4R2
+```
+
+## Predicting Elantra Sales
+We use the same variables (with the respective Google queries) to predict the sales of Hyundai Elantra.
+ 
+```{r}
+ElantraLM = lm(Elantra.Sales ~ Month + Unemployment.Rate + Elantra.Queries + CPI.Energy, data=WranglerElantraTrain)
+summary(ElantraLM)
+```
+
+Interestingly, the same variables fail to predict Elantra sales with the same strength. Elantra.Queries does not meet the significance threshold, and the R-squared is only 63%.
+
+```{r}
+summary(ElantraLM)$r.squared
+```
+
+As we have done previously, we now computed the R-squared for the test set. We use the output of the *predict* function, which gives the y-hat values on the test set, i.e. the predictions for the Elantra Sales variable using the test data. We then subtract the true test-set Sales value. The differences represent the errors, which we square and sum.
+
+We then compute the SST as the sum of the squared differences between Sales in the test set and the mean of Sales in the training set. The mean Sales from the training set represents our baseline - the best prediction of Sales, if we had no independent variables. Hence the SST is the total error, or total variability in the model.   
+
+Consequently, R-squared will be calculated as 1 minus the SSE divided by the SST. R-squared measures the variability explained by the regression model(SSE), as a percentage of the total variability(SST).
+
+```{r}
+ElantraLMLMPredictTest = predict(ElantraLM, newdata=WranglerElantraTest)
+ElantraLMSSE = sum((ElantraLMLMPredictTest - WranglerElantraTest$Elantra.Sales)^2)
+ElantraSST = sum((mean(WranglerElantraTrain$Elantra.Sales) - WranglerElantraTest$Elantra.Sales)^2)
+ElantraLMOSR2 = 1 - ElantraLMSSE/ElantraSST
+ElantraLMOSR2
+```
+The R-squared of the model is negative. This means the baseline (the model predicting the mean sales for every observation in the test set) is *outperforming the regression model*. We should conduct further analysis to explain the lack of predictability our model has for Elantra sales.
+
+
+## Interpreting Results
+
+We now plot the sales of both Elantra and Wrangler versus the relevant Google queries. 
+
+```{r}
+plot1 = ggplot(data = WranglerElantra, aes(x = Wrangler.Queries, y = Wrangler.Sales)) + 
+  geom_point(color = "steelblue")  +
+  xlab("Wrangler Queries") + ylab("Wrangler Sales") +
+  theme(legend.title=element_blank()) + theme_bw()
+
+plot2 = ggplot(data = WranglerElantra, aes(x = Elantra.Queries, y = Elantra.Sales)) + 
+  geom_point(color = "steelblue")  +
+  xlab("Elantra Queries") + ylab("Elantra Sales") +
+  theme(legend.title=element_blank()) + theme_bw()
+
+grid.arrange(plot1, plot2, ncol=2, top="Wrangler and Elantra Sales vs Queries")
+```
+
+Wrangler Sales clearly display a positive relationship with Google Queries, whereas Elantra Sales do not have such a strong relationship. Wrangler Sales have lower variability, while Elantra sales, despite an initial positive trend have a very unpredictable pattern. 
+
+It appears as though the sales of Elantra could not be accurately explained by the regression model. Let us inspect the sales over time, as well as the Elantra Queries over time.
+
+
+```{r, echo=FALSE}
+library(ggplot2)
+plot1 = ggplot(data = WranglerElantra, aes(x = date, y = Elantra.Sales)) + 
+  geom_point(color = "steelblue") +
+  geom_smooth(color = "black") + 
+  xlab("Date") + ylab("Elantra Sales") +
+  theme(legend.title=element_blank()) + theme_bw()
+
+
+plot2 = ggplot(data = WranglerElantra, aes(x = date, y = Elantra.Queries)) + 
+  geom_point(color = "steelblue")  +
+  geom_smooth(color = "black") + 
+  xlab("Time") + ylab("Elantra Queries") +
+  theme(legend.title=element_blank()) + theme_bw()
+
+grid.arrange(plot1, plot2, ncol=2, top="Elantra Sales and Queries by Time")
+```
+
+Surprisingly, Elantra sales increase with time until 2014, after which they decrease, while being very scattered around the line of best fit. Elantra queries, despite the polynomial nature of the relationship, appear to have a positive trajectory.
+
+## Correlations
+
+We would like to compute the correlation coefficients between the relevant independent and dependent variables. We had previously removed Year, yet we will add it to the correlation matrix to further depict the strong correlations between Year and Unemployment.
+
+```{r}
+WranglerCorrelation <- data.frame(WSales = WranglerElantraTrain$Wrangler.Sales, 
+                          Unempl. = WranglerElantraTrain$Unemployment.Rate,
+                          CPI.Energy = WranglerElantraTrain$CPI.Energy,
+                          Year = WranglerElantraTrain$Year)
+
+ElantraCorrelation <- data.frame(ESales = WranglerElantraTrain$Elantra.Sales, 
+                          Unempl. = WranglerElantraTrain$Unemployment.Rate,
+                          CPI.Energy = WranglerElantraTrain$CPI.Energy,
+                          Year = WranglerElantraTrain$Year)
+
+library(corrplot)
+par(mfrow=c(1,2))
+corrplot(cor(WranglerCorrelation), method="circle",  
+         type="upper", order="hclust", 
+         addCoef.col = "black", # Add coefficient of correlation
+         tl.col="black", tl.srt=45, #Text label color and rotation
+         # hide correlation coefficient on the principal diagonal
+         diag=FALSE )
+
+corrplot(cor(ElantraCorrelation), method="circle", 
+         type="upper", order="hclust", 
+         addCoef.col = "black", # Add coefficient of correlation
+         tl.col="black", tl.srt=45, #Text label color and rotation
+         # hide correlation coefficient on the principal diagonal
+         diag=FALSE )
+```
+
+The plot on the left displays the Wrangler Sales and other independent variables. As noted, Year-Unemployment has a high coefficient, and so does Sales-Unemployment. The remaining independent variables do not appear strongly correlated, and we should not be further concerned about multicollinearity.
+
+In the case of Elantra sales, the strongest correlation coefficient is Unemployment (only -0.34). This corroborates the previous claims that the sales of Elantra are unpredictable.
+
+**Discussion**
+
+Wrangler Sales appear predictable to a certain extent using economic indicators such as the rate of unemployment and the energy consumer price index, alongside Google search queries. This makes sense in the business context, however, there may be many more factors contributing to sales. Below we discuss what else we may consider for predicting the sales of Hyundai Elantra, yet the same logic could be applied to other automobiles including Jeep Wrangler.
+
+**Why do we fail to predict Elantra Sales?**
+
+ - **Insufficient data** - our training set only contains 96 observations which may not be sufficient data to accurately predict Elantra Sales, and gathering additional datapoints might help.
+ - **Missing predictors** - the most prominent possibility is that we simply do not have the independent variables to explain what impact Elantra Sales. We have seen a non-linear relationship over time, characterized by an increase followed by a decrease in sales. Hence sales do have a pattern and the Hyundai business managers might further investigate this avenue. Possibilities include:
+ 
+- **Competitor Analysis** - The sales began decreasing in 2015 which could potentially be correlated with the release of a similar automobile.
+- **Quality of Product** - If existing customers noticed a large number of defects, this may drive away new customers
+- **Secondary Markey** - We assume the sales amount is defined as sales of new models, directly from the manufacturer/retailers. We should consider obtaining data pertaining to Elantra sales on the secondary market to understand how this behaves and if customers prefer purchasing a second-hand Elenatra model versus a new one. 
+- **Fuel prices** - alongside other economic matters, the price of fuel may influence consumers purchasing habits. 
+- **Environmental Concerns** - similarly, customers may choose environmentally-friendly vehicles such as electric cars over Elantras.
+          
+**Future Model Enhancements** 
+We only considered linear regression, despite some very apparent non-linear patterns in the data, especially in the case of Elantra sales. Many other models could be attempted including polynomials, splines, logarithmic models, or other approaches such as Classification and Regression Trees(CART). CART may be particularly useful for Elantra since the linear relationship assumption appears incorrect, and CART would allow us to make splits based on decision variables, then follow the model splits to make a prediction. 
+
+## From Predictions to Recommendations
+
+A regression model could be a tool for helping decision-making in organizations, for questions such as **How many automobiles to produce in a given month?**. 
+
+Naturally, we currently lack data on the independent variables to enable us to make a prediction for the sales data in April 2018. Nonetheless, this data could be inferred through the use of forecasting. Indeed, our predictor variables are economic indicators and numerous experts and organizations concern themselves with forecasting unemployment and the CPI. 
+
+Conversely, Google queries data is more difficult to infer and our model is subject to the uncertainty. Furthermore, the causal relationship between Google queries and car sales is also questionable. Do consumers buy more because of an increased number of Google searches (e.g. through word-of-mouth, people who searched for a Wrangler online may discuss with acquaintances their intent to buy, thus driving up both queries and sales; or the Google algorithms may show more Wrangler advertisements to people who searched for this term on Google, thus driving up sales)?. Or would more sales cause more Google queries (e.g. as more Wranglers are sold, more people notice them in traffic and decide to search for them online)? Arguably we need Wrangle sales data to estimate Wrangle Google queries for a given period. Yet we can look at past queries to estimate future sales since we can safely assume that online searching precedes a purchase. 
+
+Hence a model for forecasting demand in April 2018 could include the forecasted unemployment rate and CPI for April 2018 and the Google queries for March 2018. 
+
+**Inventory-related costs** will include the cost of production, storage, resources, and materials costs. If supply exceeds demand storage and maintenance costs will rise. Nevertheless, cars are not fast-moving goods and we can argue that we should produce more than the forecasted demand as we will sell them in future periods. 
+
+**The costs of producing less than demand** include loss of opportunity of customers that would have purchased but were not able to. Also, we should consider reputational cost - consumers may not expect to not be able to purchase the car they desired. 
+
+**Given that the costs of underproducing could be deemed higher than the ones of overproducing, we recommend producing more than the forecasted demand.** For example, Wrangler sales in March were 27,829 units and we recommend producing at least 30,000 units, or forecasted demand + 10%. Similarly, Elantra sales were 17,323 units, and we recommend producing at least 20,000 units. Since Elantra sales are extremely unpredictable, a larger margin of error is advisable. 
+
+To deal with such uncertainty, we could look at other models that are more robust i.e. account for changes in the predictors' data (here forecasted predictors data) such as robust regression. 
+
